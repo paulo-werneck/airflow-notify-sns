@@ -6,6 +6,7 @@ LOGGING = logging.getLogger(__name__)
 from airflow.models import Variable
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 
+
 def airflow_notify_sns(context, **kwargs):
     """ 
     Publish Airflow Error Notification to a SNS Topic
@@ -24,9 +25,10 @@ def airflow_notify_sns(context, **kwargs):
         LOGGING.error("Variable [airflow_notify_sns_arn] not found in Airflow")
         return None
 
-
     # Message attributes
-    subject = "Airflow task execution failed"
+    subject = "{company}: [WARN] - Airflow task execution failed".format(
+        company=_get_load_balancer().split('-')[0].capitalize()
+    )
     message = get_message_text(context)
 
     # Sending message to topic
@@ -46,7 +48,9 @@ def airflow_notify_sns(context, **kwargs):
 
     return None
 
+
 def get_message_text(context):
+    url = context.get('task_instance').log_url
     return """Airflow task execution failed. 
     *Time*: {time}  
     *Task*: {task}  
@@ -59,5 +63,13 @@ def get_message_text(context):
         dag=context.get('task_instance').dag_id,
         ti=context.get('task_instance'),
         exec_date=context.get('execution_date'),
-        log_url=context.get('task_instance').log_url,
+        log_url=url.replace("localhost:8080", _get_load_balancer()),
     )
+
+
+def _get_load_balancer():
+    elb_client = AwsBaseHook(client_type="elbv2", aws_conn_id='aws_default')
+    response = elb_client.describe_load_balancers()
+    for elb in response["LoadBalancers"]:
+        if "airflow-web" in elb["LoadBalancerName"]:
+            return elb["DNSName"]
